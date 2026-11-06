@@ -25,7 +25,7 @@ Command parseCommand(const char *msg, char *argOut, size_t argOutLen);
 // True when channelName equals wanted, ignoring case. A null or empty name never matches.
 bool channelMatches(const char *channelName, const char *wanted);
 
-// Writes e.g. "📡 Hi !a0387fc0 -- We see you 7 Hops to Hayward." into out; hopsAway < 0 means unknown.
+// Writes e.g. "📡 Hi !a0387fc0 -- We see you 7 Hops in Hayward." into out; hopsAway < 0 means unknown.
 // stationName is the base station's location and may be null or empty. Returns the length written (excluding the terminator).
 size_t formatReply(char *out, size_t outLen, uint32_t fromNode, int hopsAway, const char *stationName);
 

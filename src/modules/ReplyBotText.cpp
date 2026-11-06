@@ -110,7 +110,7 @@ size_t formatReply(char *out, size_t outLen, uint32_t fromNode, int hopsAway, co
     if (hopsAway >= 0) {
         const char *unit = (hopsAway == 1) ? "Hop" : "Hops";
         if (haveName)
-            n = snprintf(out, outLen, "📡 Hi !%08x -- We see you %d %s to %s.", fromNode, hopsAway, unit, stationName);
+            n = snprintf(out, outLen, "📡 Hi !%08x -- We see you %d %s in %s.", fromNode, hopsAway, unit, stationName);
         else
             n = snprintf(out, outLen, "📡 Hi !%08x -- We see you %d %s away.", fromNode, hopsAway, unit);
     } else {

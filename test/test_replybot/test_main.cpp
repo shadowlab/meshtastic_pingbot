@@ -10,7 +10,7 @@
  * actually type it (any case, trailing punctuation, phone-added whitespace) but must stay silent on
  * ordinary chat that merely contains the word, or the bot spams the channel. channelMatches() is the
  * only thing keeping the bot off every channel but the configured one. formatReply() is the
- * user-facing contract ("📡 Hi !a0387fc0 -- We see you 7 Hops to Hayward.") and must stay
+ * user-facing contract ("📡 Hi !a0387fc0 -- We see you 7 Hops in Hayward.") and must stay
  * singular/plural-correct and degrade cleanly when the hop count or station name is unknown.
  * parseCommand() decides what gets persisted as the served channel and location, so it must never
  * yield an empty argument, a channel longer than the 11 bytes meshtastic_ChannelSettings::name holds,
@@ -215,7 +215,7 @@ static void test_module_repliesIntoTheTestChannel()
     const meshtastic_MeshPacket &reply = mockRouter->sentPackets[0];
     TEST_ASSERT_EQUAL_UINT32(NODENUM_BROADCAST, reply.to);
     TEST_ASSERT_EQUAL_UINT32(kTestCh, reply.channel);
-    TEST_ASSERT_EQUAL_STRING("📡 Hi !a0387fc0 -- We see you 7 Hops to Hayward.", sentText(0).c_str());
+    TEST_ASSERT_EQUAL_STRING("📡 Hi !a0387fc0 -- We see you 7 Hops in Hayward.", sentText(0).c_str());
 }
 
 static void test_module_ignoresOtherChannelsAndDMs()
@@ -289,19 +289,19 @@ static void test_module_phoneSetsLocationUsedInReply()
     TEST_ASSERT_EQUAL_UINT32(1, mockSvc->notificationCount);
     deliver(makeText(0x0e000001, NODENUM_BROADCAST, kTestCh, "test", 3, 1));
     TEST_ASSERT_EQUAL(1, mockRouter->sentPackets.size());
-    TEST_ASSERT_EQUAL_STRING("📡 Hi !0e000001 -- We see you 2 Hops to Fremont Hills.", sentText(0).c_str());
+    TEST_ASSERT_EQUAL_STRING("📡 Hi !0e000001 -- We see you 2 Hops in Fremont Hills.", sentText(0).c_str());
 
     // A fresh instance is what a reboot builds; the location must come back with it.
     delete mod;
     mod = new ReplyBotModuleTestShim();
     deliver(makeText(0x0e000002, NODENUM_BROADCAST, kTestCh, "test", 3, 3));
     TEST_ASSERT_EQUAL(2, mockRouter->sentPackets.size());
-    TEST_ASSERT_EQUAL_STRING("📡 Hi !0e000002 -- We see you 0 Hops to Fremont Hills.", sentText(1).c_str());
+    TEST_ASSERT_EQUAL_STRING("📡 Hi !0e000002 -- We see you 0 Hops in Fremont Hills.", sentText(1).c_str());
 
     deliver(makeText(nodeDB->getNodeNum(), NODENUM_BROADCAST, kPrimaryCh, "/replybot location clear"), RX_SRC_USER);
     deliver(makeText(0x0e000003, NODENUM_BROADCAST, kTestCh, "test", 3, 2));
     TEST_ASSERT_EQUAL(3, mockRouter->sentPackets.size());
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("📡 Hi !0e000003 -- We see you 1 Hop to Hayward.", sentText(2).c_str(),
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("📡 Hi !0e000003 -- We see you 1 Hop in Hayward.", sentText(2).c_str(),
                                      "clearing falls back to the node's long name");
 }
 #else
@@ -372,7 +372,7 @@ static void test_formatReply_matchesRequestedFormat()
 {
     char out[128];
     size_t n = ReplyBotText::formatReply(out, sizeof(out), 0xa0387fc0, 7, "Hayward");
-    TEST_ASSERT_EQUAL_STRING("📡 Hi !a0387fc0 -- We see you 7 Hops to Hayward.", out);
+    TEST_ASSERT_EQUAL_STRING("📡 Hi !a0387fc0 -- We see you 7 Hops in Hayward.", out);
     TEST_ASSERT_EQUAL(strlen(out), n);
 }
 
@@ -380,9 +380,9 @@ static void test_formatReply_singularHopAndZeroPadding()
 {
     char out[128];
     ReplyBotText::formatReply(out, sizeof(out), 0x0000abcd, 1, "Hayward");
-    TEST_ASSERT_EQUAL_STRING("📡 Hi !0000abcd -- We see you 1 Hop to Hayward.", out);
+    TEST_ASSERT_EQUAL_STRING("📡 Hi !0000abcd -- We see you 1 Hop in Hayward.", out);
     ReplyBotText::formatReply(out, sizeof(out), 0x0000abcd, 0, "Hayward");
-    TEST_ASSERT_EQUAL_STRING("📡 Hi !0000abcd -- We see you 0 Hops to Hayward.", out);
+    TEST_ASSERT_EQUAL_STRING("📡 Hi !0000abcd -- We see you 0 Hops in Hayward.", out);
 }
 
 static void test_formatReply_unknownHops()
