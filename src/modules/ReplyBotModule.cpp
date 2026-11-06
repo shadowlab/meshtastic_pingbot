@@ -24,12 +24,13 @@
 static_assert(sizeof(USERPREFS_REPLYBOT_CHANNEL_NAME) - 1 <= ReplyBotText::MAX_CHANNEL_NAME_LEN,
               "USERPREFS_REPLYBOT_CHANNEL_NAME is longer than a channel name");
 
-#ifdef USERPREFS_REPLYBOT_STATION_NAME
-static_assert(sizeof(USERPREFS_REPLYBOT_STATION_NAME) <= sizeof(meshtastic_User::long_name),
-              "USERPREFS_REPLYBOT_STATION_NAME is longer than a node long name");
+#ifdef USERPREFS_REPLYBOT_LOCATION
+static_assert(sizeof(USERPREFS_REPLYBOT_LOCATION) - 1 <= ReplyBotText::MAX_LOCATION_LEN,
+              "USERPREFS_REPLYBOT_LOCATION is longer than ReplyBotText::MAX_LOCATION_LEN");
 #endif
 
 static constexpr const char *REPLYBOT_CHANNEL_FILE = "/prefs/replybot.txt";
+static constexpr const char *REPLYBOT_LOCATION_FILE = "/prefs/replybot_loc.txt";
 
 struct ReplyBotCooldownEntry {
     uint32_t from = 0;
@@ -59,12 +60,54 @@ static bool replybotRateLimited(uint32_t from, uint32_t cooldownMs)
     return false;
 }
 
-static const char *replybotStationName()
+// Reads a saved setting into out; false (out untouched) when absent, empty, over maxLen or holding a NUL.
+static bool replybotLoad(const char *path, char *out, size_t maxLen)
 {
-#ifdef USERPREFS_REPLYBOT_STATION_NAME
-    return USERPREFS_REPLYBOT_STATION_NAME;
+#ifdef FSCom
+    char stored[ReplyBotText::MAX_LOCATION_LEN + 1] = {};
+    const size_t cap = maxLen < sizeof(stored) - 1 ? maxLen : sizeof(stored) - 1;
+    size_t n = 0;
+    spiLock->lock();
+    auto file = FSCom.open(path, FILE_O_READ);
+    if (file) {
+        n = file.read(reinterpret_cast<uint8_t *>(stored), cap + 1);
+        file.close();
+    }
+    spiLock->unlock();
+    if (n == 0 || n > cap || memchr(stored, '\0', n) != nullptr)
+        return false;
+    memcpy(out, stored, n);
+    out[n] = '\0';
+    return true;
 #else
-    return owner.long_name;
+    return false;
+#endif
+}
+
+static bool replybotSave(const char *path, const char *value)
+{
+#ifdef FSCom
+    spiLock->lock();
+    FSCom.mkdir("/prefs");
+    spiLock->unlock();
+
+    SafeFile f(path, true);
+    spiLock->lock();
+    f.write(reinterpret_cast<const uint8_t *>(value), strlen(value));
+    spiLock->unlock();
+    return f.close();
+#else
+    return false;
+#endif
+}
+
+static void replybotForget(const char *path)
+{
+#ifdef FSCom
+    spiLock->lock();
+    if (FSCom.exists(path))
+        FSCom.remove(path);
+    spiLock->unlock();
 #endif
 }
 
@@ -73,46 +116,21 @@ ReplyBotModule::ReplyBotModule() : SinglePortModule("replybot", meshtastic_PortN
 {
     isPromiscuous = true;
     // MeshModule::setup() is never invoked; modules are constructed after the filesystem is mounted.
-    loadChannelName();
-    LOG_INFO("ReplyBot: serving channel '%s'", channelName);
-}
-
-void ReplyBotModule::loadChannelName()
-{
     strncpy(channelName, USERPREFS_REPLYBOT_CHANNEL_NAME, sizeof(channelName) - 1);
-    channelName[sizeof(channelName) - 1] = '\0';
-#ifdef FSCom
-    char stored[sizeof(channelName)] = {};
-    size_t n = 0;
-    spiLock->lock();
-    auto file = FSCom.open(REPLYBOT_CHANNEL_FILE, FILE_O_READ);
-    if (file) {
-        n = file.read(reinterpret_cast<uint8_t *>(stored), sizeof(stored) - 1);
-        file.close();
-    }
-    spiLock->unlock();
-    // Re-validate through the parser's rules so a corrupt file can't install an empty or oversized name.
-    if (n > 0 && n <= ReplyBotText::MAX_CHANNEL_NAME_LEN && memchr(stored, '\0', n) == nullptr) {
-        stored[n] = '\0';
-        memcpy(channelName, stored, n + 1);
-    }
-#endif
+    replybotLoad(REPLYBOT_CHANNEL_FILE, channelName, ReplyBotText::MAX_CHANNEL_NAME_LEN);
+    replybotLoad(REPLYBOT_LOCATION_FILE, location, ReplyBotText::MAX_LOCATION_LEN);
+    LOG_INFO("ReplyBot: serving channel '%s' as '%s'", channelName, stationLocation());
 }
 
-bool ReplyBotModule::saveChannelName()
+// The phone-set location wins, then the build-time one, then the node's long name.
+const char *ReplyBotModule::stationLocation() const
 {
-#ifdef FSCom
-    spiLock->lock();
-    FSCom.mkdir("/prefs");
-    spiLock->unlock();
-
-    SafeFile f(REPLYBOT_CHANNEL_FILE, true);
-    spiLock->lock();
-    f.write(reinterpret_cast<const uint8_t *>(channelName), strlen(channelName));
-    spiLock->unlock();
-    return f.close();
+    if (location[0])
+        return location;
+#ifdef USERPREFS_REPLYBOT_LOCATION
+    return USERPREFS_REPLYBOT_LOCATION;
 #else
-    return false;
+    return owner.long_name;
 #endif
 }
 
@@ -133,28 +151,45 @@ void ReplyBotModule::notifyPhone(const char *format, ...)
 
 void ReplyBotModule::handleCommand(const char *msg)
 {
-    char requested[sizeof(channelName)] = {};
-    switch (ReplyBotText::parseCommand(msg, requested, sizeof(requested))) {
+    static const char *const notSaved = " (not saved, reverts on reboot)";
+    char arg[ReplyBotText::MAX_LOCATION_LEN + 1] = {};
+    switch (ReplyBotText::parseCommand(msg, arg, sizeof(arg))) {
     case ReplyBotText::Command::None:
         return;
     case ReplyBotText::Command::Status:
-        notifyPhone("ReplyBot is answering on channel '%s'", channelName);
+        notifyPhone("ReplyBot answers on channel '%s' as '%s'", channelName, stationLocation());
         return;
-    case ReplyBotText::Command::SetChannel:
-        memcpy(channelName, requested, sizeof(channelName));
-        break;
-    case ReplyBotText::Command::ResetChannel:
-        strncpy(channelName, USERPREFS_REPLYBOT_CHANNEL_NAME, sizeof(channelName) - 1);
-        channelName[sizeof(channelName) - 1] = '\0';
-        break;
-    case ReplyBotText::Command::Invalid:
-        notifyPhone("ReplyBot: use /replybot channel <name> (max %u chars), /replybot reset or /replybot status",
-                    (unsigned)ReplyBotText::MAX_CHANNEL_NAME_LEN);
+    case ReplyBotText::Command::SetChannel: {
+        strncpy(channelName, arg, sizeof(channelName) - 1);
+        const bool saved = replybotSave(REPLYBOT_CHANNEL_FILE, channelName);
+        notifyPhone("ReplyBot now answers on channel '%s'%s", channelName, saved ? "" : notSaved);
         return;
     }
-
-    const bool saved = saveChannelName();
-    notifyPhone("ReplyBot now answers on channel '%s'%s", channelName, saved ? "" : " (not saved, reverts on reboot)");
+    case ReplyBotText::Command::SetLocation: {
+        strncpy(location, arg, sizeof(location) - 1);
+        const bool saved = replybotSave(REPLYBOT_LOCATION_FILE, location);
+        notifyPhone("ReplyBot location set to '%s'%s", location, saved ? "" : notSaved);
+        return;
+    }
+    case ReplyBotText::Command::ClearLocation:
+        memset(location, 0, sizeof(location));
+        replybotForget(REPLYBOT_LOCATION_FILE);
+        notifyPhone("ReplyBot location cleared, using '%s'", stationLocation());
+        return;
+    case ReplyBotText::Command::Reset:
+        memset(channelName, 0, sizeof(channelName));
+        strncpy(channelName, USERPREFS_REPLYBOT_CHANNEL_NAME, sizeof(channelName) - 1);
+        memset(location, 0, sizeof(location));
+        replybotForget(REPLYBOT_CHANNEL_FILE);
+        replybotForget(REPLYBOT_LOCATION_FILE);
+        notifyPhone("ReplyBot reset: channel '%s' as '%s'", channelName, stationLocation());
+        return;
+    case ReplyBotText::Command::Invalid:
+        notifyPhone("ReplyBot: /replybot channel <name> (max %u chars), /replybot location <text>|clear (max %u), "
+                    "/replybot reset, /replybot status",
+                    (unsigned)ReplyBotText::MAX_CHANNEL_NAME_LEN, (unsigned)ReplyBotText::MAX_LOCATION_LEN);
+        return;
+    }
 }
 
 bool ReplyBotModule::wantPacket(const meshtastic_MeshPacket *p)
@@ -197,7 +232,7 @@ ProcessMessage ReplyBotModule::handleReceived(const meshtastic_MeshPacket &mp)
 
     const int hopsAway = getHopsAway(mp);
     char reply[sizeof(meshtastic_User::long_name) + 64];
-    ReplyBotText::formatReply(reply, sizeof(reply), mp.from, hopsAway, replybotStationName());
+    ReplyBotText::formatReply(reply, sizeof(reply), mp.from, hopsAway, stationLocation());
     LOG_INFO("ReplyBot: answering 0x%08x (%d hops) on ch %u", mp.from, hopsAway, (unsigned)mp.channel);
     sendReply(mp, reply);
     return ProcessMessage::CONTINUE;

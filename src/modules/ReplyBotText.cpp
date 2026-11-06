@@ -51,7 +51,26 @@ static bool isBlankTail(const char *p)
     return *skipBlanks(p) == '\0';
 }
 
-Command parseCommand(const char *msg, char *channelOut, size_t channelOutLen)
+// Copies the trimmed argument after keyword into out; false if it is empty or longer than maxLen.
+static bool copyArgument(const char *rest, const char *keyword, size_t maxLen, char *out, size_t outLen)
+{
+    const char *arg = skipBlanks(rest + strlen(keyword));
+    size_t len = strlen(arg);
+    while (len > 0 && isBlank(arg[len - 1]))
+        len--;
+    if (len == 0 || len > maxLen || !out || len >= outLen)
+        return false;
+    memcpy(out, arg, len);
+    out[len] = '\0';
+    return true;
+}
+
+static bool isExactly(const char *rest, const char *word)
+{
+    return startsWithWord(rest, word) && isBlankTail(rest + strlen(word));
+}
+
+Command parseCommand(const char *msg, char *argOut, size_t argOutLen)
 {
     if (!msg)
         return Command::None;
@@ -60,22 +79,18 @@ Command parseCommand(const char *msg, char *channelOut, size_t channelOutLen)
         return Command::None;
 
     const char *rest = skipBlanks(msg + strlen("/replybot"));
-    if (*rest == '\0' || (startsWithWord(rest, "status") && isBlankTail(rest + strlen("status"))))
+    if (*rest == '\0' || isExactly(rest, "status"))
         return Command::Status;
-    if (startsWithWord(rest, "reset") && isBlankTail(rest + strlen("reset")))
-        return Command::ResetChannel;
-    if (!startsWithWord(rest, "channel"))
-        return Command::Invalid;
-
-    const char *name = skipBlanks(rest + strlen("channel"));
-    size_t len = strlen(name);
-    while (len > 0 && isBlank(name[len - 1]))
-        len--;
-    if (len == 0 || len > MAX_CHANNEL_NAME_LEN || !channelOut || len >= channelOutLen)
-        return Command::Invalid;
-    memcpy(channelOut, name, len);
-    channelOut[len] = '\0';
-    return Command::SetChannel;
+    if (isExactly(rest, "reset"))
+        return Command::Reset;
+    if (startsWithWord(rest, "channel"))
+        return copyArgument(rest, "channel", MAX_CHANNEL_NAME_LEN, argOut, argOutLen) ? Command::SetChannel : Command::Invalid;
+    if (startsWithWord(rest, "location")) {
+        if (isExactly(skipBlanks(rest + strlen("location")), "clear"))
+            return Command::ClearLocation;
+        return copyArgument(rest, "location", MAX_LOCATION_LEN, argOut, argOutLen) ? Command::SetLocation : Command::Invalid;
+    }
+    return Command::Invalid;
 }
 
 bool channelMatches(const char *channelName, const char *wanted)

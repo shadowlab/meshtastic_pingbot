@@ -3,7 +3,8 @@
  *  - ReplyBotText::isTrigger()      which chat messages wake the base-station ping bot
  *  - ReplyBotText::channelMatches() which channel the bot is allowed to listen and reply on
  *  - ReplyBotText::formatReply()    the exact reply text sent back to the mesh
- *  - ReplyBotText::parseCommand()   the "/replybot ..." commands the paired phone uses to retarget the bot
+ *  - ReplyBotText::parseCommand()   the "/replybot ..." commands the paired phone uses to set the served
+ *                                    channel and the station location named in the reply
  *
  * Why: the bot sits on a busy shared channel. isTrigger() must fire on a bare "test" as people
  * actually type it (any case, trailing punctuation, phone-added whitespace) but must stay silent on
@@ -11,8 +12,9 @@
  * only thing keeping the bot off every channel but the configured one. formatReply() is the
  * user-facing contract ("📡 Hi !a0387fc0 -- We see you 7 Hops to Hayward.") and must stay
  * singular/plural-correct and degrade cleanly when the hop count or station name is unknown.
- * parseCommand() decides what gets persisted as the served channel, so it must never yield an empty
- * name or one longer than the 11 bytes meshtastic_ChannelSettings::name can hold.
+ * parseCommand() decides what gets persisted as the served channel and location, so it must never
+ * yield an empty argument, a channel longer than the 11 bytes meshtastic_ChannelSettings::name holds,
+ * or a location longer than MAX_LOCATION_LEN (refused, never truncated mid-UTF-8).
  *
  * Regressions guarded: replying to "testing 123" or "this is a test"; ignoring "Test" or "test!";
  * matching a channel by prefix ("Testing") or with an empty configured name; a reply that drops the
@@ -26,8 +28,10 @@
  * into that same channel; it never answers DMs, other channels, its own traffic, or a sender still in
  * cooldown; "/replybot" commands are honoured only from a locally attached client (RX_SRC_USER) and
  * never from the mesh, are acknowledged with a ClientNotification, and the chosen channel survives a
- * module restart via /prefs/replybot.txt. Regressions guarded: a mesh user retargeting the bot, the
- * bot answering on a channel it was moved off, or a retarget that reverts on reboot.
+ * module restart via /prefs/replybot.txt. The location set from the phone replaces "Hayward" in the
+ * reply, survives a restart via /prefs/replybot_loc.txt, and "location clear" falls back to the node's
+ * long name. Regressions guarded: a mesh user retargeting the bot, the bot answering on a channel it
+ * was moved off, or a channel or location that reverts on reboot.
  */
 
 #include "MeshTypes.h" // BEFORE TestUtil.h
@@ -115,10 +119,11 @@ void installChannel(ChannelIndex index, meshtastic_Channel_Role role, const char
     ch.settings.psk.bytes[0] = 1;
 }
 
-void removeSavedChannel()
+void removeSavedSettings()
 {
     spiLock->lock();
     FSCom.remove("/prefs/replybot.txt");
+    FSCom.remove("/prefs/replybot_loc.txt");
     spiLock->unlock();
 }
 
@@ -175,7 +180,7 @@ void setUp(void)
     channels.onConfigChanged();
 
     strncpy(owner.long_name, "Hayward", sizeof(owner.long_name) - 1);
-    removeSavedChannel();
+    removeSavedSettings();
     mod = new ReplyBotModuleTestShim();
 }
 
@@ -183,7 +188,7 @@ void tearDown(void)
 {
     delete mod;
     mod = nullptr;
-    removeSavedChannel();
+    removeSavedSettings();
 
     // sendToMesh() copies a queue status to the phone on every send; release them for LSan.
     if (mockSvc) {
@@ -277,6 +282,27 @@ static void test_module_invalidCommandIsReportedNotApplied()
     deliver(makeText(nodeDB->getNodeNum(), NODENUM_BROADCAST, kPrimaryCh, "/replybot channel WayTooLongName"), RX_SRC_USER);
     TEST_ASSERT_EQUAL_STRING("Test", mod->channelName);
     TEST_ASSERT_EQUAL_UINT32(1, mockSvc->notificationCount);
+}
+static void test_module_phoneSetsLocationUsedInReply()
+{
+    deliver(makeText(nodeDB->getNodeNum(), NODENUM_BROADCAST, kPrimaryCh, "/replybot location Fremont Hills"), RX_SRC_USER);
+    TEST_ASSERT_EQUAL_UINT32(1, mockSvc->notificationCount);
+    deliver(makeText(0x0e000001, NODENUM_BROADCAST, kTestCh, "test", 3, 1));
+    TEST_ASSERT_EQUAL(1, mockRouter->sentPackets.size());
+    TEST_ASSERT_EQUAL_STRING("📡 Hi !0e000001 -- We see you 2 Hops to Fremont Hills.", sentText(0).c_str());
+
+    // A fresh instance is what a reboot builds; the location must come back with it.
+    delete mod;
+    mod = new ReplyBotModuleTestShim();
+    deliver(makeText(0x0e000002, NODENUM_BROADCAST, kTestCh, "test", 3, 3));
+    TEST_ASSERT_EQUAL(2, mockRouter->sentPackets.size());
+    TEST_ASSERT_EQUAL_STRING("📡 Hi !0e000002 -- We see you 0 Hops to Fremont Hills.", sentText(1).c_str());
+
+    deliver(makeText(nodeDB->getNodeNum(), NODENUM_BROADCAST, kPrimaryCh, "/replybot location clear"), RX_SRC_USER);
+    deliver(makeText(0x0e000003, NODENUM_BROADCAST, kTestCh, "test", 3, 2));
+    TEST_ASSERT_EQUAL(3, mockRouter->sentPackets.size());
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("📡 Hi !0e000003 -- We see you 1 Hop to Hayward.", sentText(2).c_str(),
+                                     "clearing falls back to the node's long name");
 }
 #else
 void setUp(void) {}
@@ -415,9 +441,25 @@ static void test_parseCommand_statusResetAndInvalid()
     char name[16];
     TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot", name, sizeof(name)) == ReplyBotText::Command::Status);
     TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot status", name, sizeof(name)) == ReplyBotText::Command::Status);
-    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot reset ", name, sizeof(name)) == ReplyBotText::Command::ResetChannel);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot reset ", name, sizeof(name)) == ReplyBotText::Command::Reset);
     TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot reset now", name, sizeof(name)) == ReplyBotText::Command::Invalid);
     TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot frobnicate", name, sizeof(name)) == ReplyBotText::Command::Invalid);
+}
+
+static void test_parseCommand_location()
+{
+    char arg[40];
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot location  Fremont Hills ", arg, sizeof(arg)) ==
+                     ReplyBotText::Command::SetLocation);
+    TEST_ASSERT_EQUAL_STRING("Fremont Hills", arg);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot location clear", arg, sizeof(arg)) ==
+                     ReplyBotText::Command::ClearLocation);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot location", arg, sizeof(arg)) == ReplyBotText::Command::Invalid);
+    // 32 bytes is the cap; 33 must be refused rather than cut, which could split a UTF-8 character.
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot location 0123456789abcdef0123456789ABCDEF", arg, sizeof(arg)) ==
+                     ReplyBotText::Command::SetLocation);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot location 0123456789abcdef0123456789ABCDEFx", arg, sizeof(arg)) ==
+                     ReplyBotText::Command::Invalid);
 }
 
 static void test_parseCommand_nonCommandsIgnored()
@@ -451,6 +493,7 @@ void setup()
     RUN_TEST(test_parseCommand_setChannelTrimsName);
     RUN_TEST(test_parseCommand_channelNameLengthBounds);
     RUN_TEST(test_parseCommand_statusResetAndInvalid);
+    RUN_TEST(test_parseCommand_location);
     RUN_TEST(test_parseCommand_nonCommandsIgnored);
 #if !MESHTASTIC_EXCLUDE_REPLYBOT
     RUN_TEST(test_module_repliesIntoTheTestChannel);
@@ -460,6 +503,7 @@ void setup()
     RUN_TEST(test_module_phoneCommandRetargetsAndPersists);
     RUN_TEST(test_module_meshCannotRunCommands);
     RUN_TEST(test_module_invalidCommandIsReportedNotApplied);
+    RUN_TEST(test_module_phoneSetsLocationUsedInReply);
 #endif
     exit(UNITY_END());
 }

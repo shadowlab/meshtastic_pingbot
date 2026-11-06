@@ -6,7 +6,7 @@
 #include "modules/ReplyBotText.h"
 
 // Base-station ping bot: answers "test" (and /ping, /hello, /test) on one channel (default "Test") with the
-// sender's ID and hop count. The paired phone retargets it with "/replybot channel <name>".
+// sender's ID, hop count and this station's location. The paired phone sets both with "/replybot ..." commands.
 // Enable with "USERPREFS_REPLYBOT_ENABLED": "true" in userPrefs.jsonc.
 class ReplyBotModule : public SinglePortModule
 {
@@ -17,11 +17,11 @@ class ReplyBotModule : public SinglePortModule
 
   protected:
     void handleCommand(const char *msg);
-    void loadChannelName();
-    bool saveChannelName();
+    const char *stationLocation() const;
     void notifyPhone(const char *format, ...);
     void sendReply(const meshtastic_MeshPacket &rx, const char *text);
 
     char channelName[ReplyBotText::MAX_CHANNEL_NAME_LEN + 1] = {};
+    char location[ReplyBotText::MAX_LOCATION_LEN + 1] = {}; // empty: not set from the phone
 };
 #endif // MESHTASTIC_EXCLUDE_REPLYBOT
