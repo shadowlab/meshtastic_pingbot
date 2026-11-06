@@ -611,6 +611,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define MESHTASTIC_EXCLUDE_ADMIN 1
 #endif
 
+// The reply bot is excluded globally in platformio.ini; a base-station build opts back in via userPrefs.
+#if defined(USERPREFS_REPLYBOT_ENABLED) && USERPREFS_REPLYBOT_ENABLED
+#undef MESHTASTIC_EXCLUDE_REPLYBOT
+#define MESHTASTIC_EXCLUDE_REPLYBOT 0
+#endif
+
 // Store & Forward is implemented only for ESP32 and Portduino
 #if !defined(ARCH_ESP32) && !defined(ARCH_PORTDUINO) && !defined(MESHTASTIC_EXCLUDE_STOREFORWARD)
 #define MESHTASTIC_EXCLUDE_STOREFORWARD 1

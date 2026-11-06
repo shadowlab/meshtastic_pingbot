@@ -37,13 +37,6 @@ on:
       - event/*
       - feature/*
 
-  schedule:
-    # Nightly develop build, published to the meshtastic-firmware-nightly R2
-    # bucket (no GitHub release).
-    # Scheduled runs execute on the default branch (develop). 07:00 UTC avoids the 00:00 tests
-    # and 02:00 daily_packaging crons.
-    - cron: 0 7 * * * # Nightly develop build/publish (default branch is develop)
-
   workflow_dispatch:
     inputs:
       # trunk-ignore(checkov/CKV_GHA_7): intentional manual-test switch for the nightly publish path
@@ -96,8 +89,10 @@ jobs:
             done <<<"$ADDED_CONFIGS"
           fi
           # PRs use the narrowed --level pr board subset. Full-matrix builds run on
-          # push / schedule / workflow_dispatch.
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+          # push / workflow_dispatch. Forks build only the ping-bot base station board.
+          if [[ "$GITHUB_REPOSITORY_OWNER" != "meshtastic" ]]; then
+            TARGETS='[{"board": "seeed-xiao-s3-pingbot", "platform": "esp32s3"}]'
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             TARGETS=$(./bin/generate_ci_matrix.py all --level pr "${ADDED_ARGS[@]}")
           else
             TARGETS=$(./bin/generate_ci_matrix.py all)
@@ -168,7 +163,7 @@ jobs:
     secrets: inherit
 
   MacOS:
-    if: github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
+    if: github.repository_owner == 'meshtastic' && github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
     strategy:
       fail-fast: false
       matrix:
@@ -182,7 +177,7 @@ jobs:
     # secrets: inherit
 
   Windows:
-    if: github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
+    if: github.repository_owner == 'meshtastic' && github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
     strategy:
       fail-fast: false
       matrix:
@@ -201,7 +196,7 @@ jobs:
     secrets: inherit
 
   test-native:
-    if: github.repository_owner == 'meshtastic' && github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
+    if: github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
     permissions: # Needed for dorny/test-reporter.
       contents: read
       actions: read
@@ -209,7 +204,7 @@ jobs:
     uses: ./.github/workflows/test_native.yml
 
   build-wasm:
-    if: github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
+    if: github.repository_owner == 'meshtastic' && github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
     # Build the WebAssembly portduino node ([env:native-wasm]) as part of normal CI,
     # like the other platforms. It's a dedicated job (not a row in the `build`
     # matrix) because its artifact is meshnode.{mjs,wasm} - not a flashable
@@ -218,7 +213,7 @@ jobs:
     uses: ./.github/workflows/build_portduino_wasm.yml
 
   docker:
-    if: github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
+    if: github.repository_owner == 'meshtastic' && github.event_name != 'schedule' && github.event.inputs.nightly != 'true' && !contains(github.ref_name, 'event/')
     permissions: # Needed for pushing to GHCR.
       contents: read
       packages: write
@@ -463,7 +458,8 @@ jobs:
   # exceeds its static RAM (.data+.bss) or flash budget. Kept separate from
   # firmware-size-report, which is informational and continue-on-error.
   size-budget-gate:
-    if: github.event_name != 'schedule' && github.event.inputs.nightly != 'true'
+    # Forks build one board, so the budgeted envs are never present.
+    if: github.repository_owner == 'meshtastic' && github.event_name != 'schedule' && github.event.inputs.nightly != 'true'
     permissions:
       contents: read
       actions: read

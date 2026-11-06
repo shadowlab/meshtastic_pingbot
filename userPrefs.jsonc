@@ -116,6 +116,9 @@
   // "USERPREFS_MESH_BEACON_TARGET_3_PRESET": "meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST",
   // "USERPREFS_MESH_BEACON_TARGET_3_REGION": "meshtastic_Config_LoRaConfig_RegionCode_EU_868",
   // "USERPREFS_MESH_BEACON_TARGET_3_CHANNEL_INDEX": "3",
+  // "USERPREFS_REPLYBOT_ENABLED": "true",           // Base-station ping bot: answer "test" with sender ID + hop count
+  // "USERPREFS_REPLYBOT_CHANNEL_NAME": "Test",      // Initial channel to serve (default "Test"); change at runtime with "/replybot channel <name>" from the paired phone
+  // "USERPREFS_REPLYBOT_LOCATION": "Hayward",       // Location in the reply (max 32 chars); "/replybot location <text>" from the phone overrides it; default is the node's long name
   // "USERPREFS_RINGTONE_NAG_SECS": "60",
   // "USERPREFS_NODEINFO_REPLY_SUPPRESS_SECS": "43200",
   // "USERPREFS_UI_TEST_LOG": "true", // Test-only: emits `Screen: frame N/M name=... reason=...` log per UI transition (for the meshtastic-mcp ui test tier); off in release builds.
