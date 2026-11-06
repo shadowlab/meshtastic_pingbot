@@ -39,6 +39,45 @@ bool isTrigger(const char *msg)
     return true;
 }
 
+static const char *skipBlanks(const char *p)
+{
+    while (isBlank(*p))
+        p++;
+    return p;
+}
+
+static bool isBlankTail(const char *p)
+{
+    return *skipBlanks(p) == '\0';
+}
+
+Command parseCommand(const char *msg, char *channelOut, size_t channelOutLen)
+{
+    if (!msg)
+        return Command::None;
+    msg = skipBlanks(msg);
+    if (!startsWithWord(msg, "/replybot"))
+        return Command::None;
+
+    const char *rest = skipBlanks(msg + strlen("/replybot"));
+    if (*rest == '\0' || (startsWithWord(rest, "status") && isBlankTail(rest + strlen("status"))))
+        return Command::Status;
+    if (startsWithWord(rest, "reset") && isBlankTail(rest + strlen("reset")))
+        return Command::ResetChannel;
+    if (!startsWithWord(rest, "channel"))
+        return Command::Invalid;
+
+    const char *name = skipBlanks(rest + strlen("channel"));
+    size_t len = strlen(name);
+    while (len > 0 && isBlank(name[len - 1]))
+        len--;
+    if (len == 0 || len > MAX_CHANNEL_NAME_LEN || !channelOut || len >= channelOutLen)
+        return Command::Invalid;
+    memcpy(channelOut, name, len);
+    channelOut[len] = '\0';
+    return Command::SetChannel;
+}
+
 bool channelMatches(const char *channelName, const char *wanted)
 {
     if (!channelName || !wanted || wanted[0] == '\0')

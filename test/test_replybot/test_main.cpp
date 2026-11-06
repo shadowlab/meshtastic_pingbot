@@ -3,6 +3,7 @@
  *  - ReplyBotText::isTrigger()      which chat messages wake the base-station ping bot
  *  - ReplyBotText::channelMatches() which channel the bot is allowed to listen and reply on
  *  - ReplyBotText::formatReply()    the exact reply text sent back to the mesh
+ *  - ReplyBotText::parseCommand()   the "/replybot ..." commands the paired phone uses to retarget the bot
  *
  * Why: the bot sits on a busy shared channel. isTrigger() must fire on a bare "test" as people
  * actually type it (any case, trailing punctuation, phone-added whitespace) but must stay silent on
@@ -10,10 +11,14 @@
  * only thing keeping the bot off every channel but the configured one. formatReply() is the
  * user-facing contract ("📡 Hi !a0387fc0 -- We see you 7 Hops to Hayward.") and must stay
  * singular/plural-correct and degrade cleanly when the hop count or station name is unknown.
+ * parseCommand() decides what gets persisted as the served channel, so it must never yield an empty
+ * name or one longer than the 11 bytes meshtastic_ChannelSettings::name can hold.
  *
  * Regressions guarded: replying to "testing 123" or "this is a test"; ignoring "Test" or "test!";
  * matching a channel by prefix ("Testing") or with an empty configured name; a reply that drops the
- * !xxxxxxxx node ID, says "1 Hops", prints a negative hop count, or overruns its buffer.
+ * !xxxxxxxx node ID, says "1 Hops", prints a negative hop count, or overruns its buffer; a channel
+ * command that stores an empty, untrimmed or over-long name, or that treats "/replybotx" or ordinary
+ * chat as a command.
  */
 
 #include "TestUtil.h"
@@ -126,6 +131,49 @@ static void test_formatReply_truncatesWithinBuffer()
     TEST_ASSERT_EQUAL(0, ReplyBotText::formatReply(nullptr, 0, 1, 1, "x"));
 }
 
+static void test_parseCommand_setChannelTrimsName()
+{
+    char name[16];
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot channel Rescue", name, sizeof(name)) ==
+                     ReplyBotText::Command::SetChannel);
+    TEST_ASSERT_EQUAL_STRING("Rescue", name);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("  /ReplyBot   CHANNEL   Ham Net  \n", name, sizeof(name)) ==
+                     ReplyBotText::Command::SetChannel);
+    TEST_ASSERT_EQUAL_STRING("Ham Net", name);
+}
+
+static void test_parseCommand_channelNameLengthBounds()
+{
+    char name[16];
+    // 11 bytes is the most meshtastic_ChannelSettings::name holds; 12 must be refused, not truncated.
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot channel ABCDEFGHIJK", name, sizeof(name)) ==
+                     ReplyBotText::Command::SetChannel);
+    TEST_ASSERT_EQUAL_STRING("ABCDEFGHIJK", name);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot channel ABCDEFGHIJKL", name, sizeof(name)) ==
+                     ReplyBotText::Command::Invalid);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot channel   ", name, sizeof(name)) == ReplyBotText::Command::Invalid);
+    char tiny[4];
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot channel Test", tiny, sizeof(tiny)) == ReplyBotText::Command::Invalid);
+}
+
+static void test_parseCommand_statusResetAndInvalid()
+{
+    char name[16];
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot", name, sizeof(name)) == ReplyBotText::Command::Status);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot status", name, sizeof(name)) == ReplyBotText::Command::Status);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot reset ", name, sizeof(name)) == ReplyBotText::Command::ResetChannel);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot reset now", name, sizeof(name)) == ReplyBotText::Command::Invalid);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybot frobnicate", name, sizeof(name)) == ReplyBotText::Command::Invalid);
+}
+
+static void test_parseCommand_nonCommandsIgnored()
+{
+    char name[16];
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("test", name, sizeof(name)) == ReplyBotText::Command::None);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand("/replybotx channel A", name, sizeof(name)) == ReplyBotText::Command::None);
+    TEST_ASSERT_TRUE(ReplyBotText::parseCommand(nullptr, name, sizeof(name)) == ReplyBotText::Command::None);
+}
+
 extern "C" {
 void setup()
 {
@@ -144,6 +192,10 @@ void setup()
     RUN_TEST(test_formatReply_unknownHops);
     RUN_TEST(test_formatReply_noStationName);
     RUN_TEST(test_formatReply_truncatesWithinBuffer);
+    RUN_TEST(test_parseCommand_setChannelTrimsName);
+    RUN_TEST(test_parseCommand_channelNameLengthBounds);
+    RUN_TEST(test_parseCommand_statusResetAndInvalid);
+    RUN_TEST(test_parseCommand_nonCommandsIgnored);
     exit(UNITY_END());
 }
 

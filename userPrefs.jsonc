@@ -117,7 +117,7 @@
   // "USERPREFS_MESH_BEACON_TARGET_3_REGION": "meshtastic_Config_LoRaConfig_RegionCode_EU_868",
   // "USERPREFS_MESH_BEACON_TARGET_3_CHANNEL_INDEX": "3",
   // "USERPREFS_REPLYBOT_ENABLED": "true",           // Base-station ping bot: answer "test" with sender ID + hop count
-  // "USERPREFS_REPLYBOT_CHANNEL_NAME": "Test",      // Only listen and reply on this channel (default "Test")
+  // "USERPREFS_REPLYBOT_CHANNEL_NAME": "Test",      // Initial channel to serve (default "Test"); change at runtime with "/replybot channel <name>" from the paired phone
   // "USERPREFS_REPLYBOT_STATION_NAME": "Hayward",   // Name in the reply; defaults to the node's long name
   // "USERPREFS_RINGTONE_NAG_SECS": "60",
   // "USERPREFS_NODEINFO_REPLY_SUPPRESS_SECS": "43200",
