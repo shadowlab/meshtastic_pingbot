@@ -9,6 +9,7 @@
 #include "SPILock.h"
 #include "SafeFile.h"
 #include "Throttle.h"
+#include "UptimeClock.h"
 #include "gps/RTC.h"
 #include "mesh/MeshTypes.h"
 #include "modules/RoutingModule.h"
@@ -48,12 +49,12 @@ static bool replybotRateLimited(uint32_t from, uint32_t cooldownMs)
         if (e.from == from) {
             if (Throttle::isWithinTimespanMs(e.lastMs, cooldownMs))
                 return true;
-            e.lastMs = millis();
+            e.lastMs = Time::getMillis();
             return false;
         }
     }
     replybotCooldown[replybotCooldownIdx].from = from;
-    replybotCooldown[replybotCooldownIdx].lastMs = millis();
+    replybotCooldown[replybotCooldownIdx].lastMs = Time::getMillis();
     replybotCooldownIdx = (replybotCooldownIdx + 1) % REPLYBOT_COOLDOWN_SLOTS;
     return false;
 }
